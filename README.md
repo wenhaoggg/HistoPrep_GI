@@ -1,3 +1,19 @@
+# HistoPrep_GI
+## Implemented features:
+1. Add [H&E Otsu threshold], Blood Detection to get_tissue_mask()
+   Restriction: Blood mask is generated at the same level as Tissue mask
+                If H&E Otsu used, then no blur step there and only return mask in the end.
+
+2. Not done: remove noise using closing and opening like bubbles, small noise
+## Usage:
+Learning from [HEIP Patching code]:
+```python
+threshold, tissue_mask = reader.get_tissue_mask(level=-1)
+```
+
+
+[H&E Otsu threshold]: https://www.nature.com/articles/s41598-023-50183-4
+[HEIP Patching code]: https://github.com/ValeAri/HEIP/blob/main/examples/1_wsi_patching.ipynb
 <div align="center">
 
 # HistoPrep

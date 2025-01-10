@@ -182,18 +182,20 @@ class SlideReader:
         self,
         *,
         level: Optional[int] = None,
-        threshold: Optional[int] = None,
+        threshold: Union[int, str] = "H&E_Otsu", #Optional[int] = None,
+        blood: bool = True,
         multiplier: float = 1.05,
         sigma: float = 0.0,
-    ) -> tuple[int, np.ndarray]:
+    ) -> np.ndarray: #tuple[int, np.ndarray]:
         """Detect tissue from slide pyramid level image.
 
         Args:
             level: Slide pyramid level to use for tissue detection. If None, uses the
                 `level_from_max_dimension` method. Defaults to None.
-            threshold: Threshold for tissue detection. If set, will detect tissue by
-                global thresholding. Otherwise Otsu's method is used to find a
-                threshold. Defaults to None.
+            threshold: "H&E_Otsu" or not. Threshold for tissue detection. If set, will detect tissue by
+            global thresholding, and otherwise Otsu's method is used to find
+            a threshold. Defaults to None.
+            blood: Blood Filter or not. Defaults to True.
             multiplier: Otsu's method finds an optimal threshold by minimizing the
                 weighted within-class variance. This threshold is then multiplied with
                 `multiplier`. Ignored if `threshold` is not None. Defaults to 1.0.
@@ -203,7 +205,8 @@ class SlideReader:
             ValueError: Threshold not between 0 and 255.
 
         Returns:
-            Threshold and tissue mask.
+            Tissue mask
+            #Threshold and tissue mask.
         """
         level = (
             self.level_from_max_dimension()
@@ -213,6 +216,7 @@ class SlideReader:
         return F.get_tissue_mask(
             image=self.read_level(level),
             threshold=threshold,
+            blood=blood,
             multiplier=multiplier,
             sigma=sigma,
         )
