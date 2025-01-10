@@ -3,10 +3,13 @@ from typing import Optional, Union
 import cv2
 import numpy as np
 from PIL import Image
-
+from typing import Union, Tuple
+from skimage.filters import threshold_otsu # pylint: disable=no-name-in-module
+from scipy.signal import convolve2d
 from ._check import check_image
 
 ERROR_THRESHOLD = "Threshold should be in range [0, 255], got {}."
+ERROR_BLOOD = "Blood filter should be a boolean, got {}."
 
 MAX_THRESHOLD = 255
 WHITE_PIXEL = 255
@@ -18,7 +21,8 @@ GRAY_NDIM = 2
 def get_tissue_mask(
     image: Union[Image.Image, np.ndarray],
     *,
-    threshold: Optional[int] = None,
+    threshold: Union[int, str] = "H&E_Otsu", #None
+    blood: bool = True,
     multiplier: float = 1.0,
     sigma: float = 1.0,
 ) -> tuple[int, np.ndarray]:
@@ -26,9 +30,10 @@ def get_tissue_mask(
 
     Args:
         image: Input image.
-        threshold: Threshold for tissue detection. If set, will detect tissue by
+        threshold: "H&E_Otsu" or not. Threshold for tissue detection. If set, will detect tissue by
             global thresholding, and otherwise Otsu's method is used to find
             a threshold. Defaults to None.
+        blood: Blood Filter or not. Defaults to True.
         multiplier: Otsu's method is used to find an optimal threshold by
             minimizing the weighted within-class variance. This threshold is
             then multiplied with `multiplier`. Ignored if `threshold` is not None.
@@ -44,18 +49,26 @@ def get_tissue_mask(
     # Check image and convert to array.
     image = check_image(image)
     # Check arguments.
-    if threshold is not None and not 0 <= threshold <= MAX_THRESHOLD:
+    if threshold is not None and not 0 <= threshold <= MAX_THRESHOLD and threshold is not "H&E_Otsu":
         raise ValueError(ERROR_THRESHOLD.format(threshold))
+    if not isinstance(blood, bool):
+        raise ValueError(ERROR_BLOOD.format(blood))
     # Convert to grayscale.
     gray = image if image.ndim == GRAY_NDIM else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     # Gaussian blurring.
     blur = _gaussian_blur(image=gray, sigma=sigma, truncate=3.5)
     # Get threshold.
-    if threshold is None:
+    if threshold is "H&E_Otsu":
+        threshold = _h_and_e_otsu_threshold(image=image, nbins=256, hist=None)
+        threshold = max(min(255, int(threshold * max(0.0, multiplier) + 0.5)), 0)
+    elif threshold is None:
         threshold = _otsu_threshold(gray=blur)
         threshold = max(min(255, int(threshold * max(0.0, multiplier) + 0.5)), 0)
     # Global thresholding.
     thrsh, mask = cv2.threshold(blur, threshold, 1, cv2.THRESH_BINARY_INV)
+
+    #Blood filter
+    if blood:
     return int(thrsh), mask
 
 
@@ -115,6 +128,76 @@ def _otsu_threshold(*, gray: np.ndarray) -> int:
         values, None, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
     return threshold
+
+def _h_and_e_otsu_threshold(
+    *,
+    image: np.ndarray,
+    #blur_kernel_width: int = 0,
+    nbins: int = 256,
+    hist: Union[np.ndarray, Tuple[np.ndarray, np.ndarray]] = None
+) -> int:
+    """Calculates the H&E Otsu threshold.
+
+    Args:
+        image (np.ndarray): An RGB image
+        #blur_kernel_width (int): Blurs the mask with the given blur kernel
+        nbins (int, optional): Number of bins used to calculate histogram.
+                            This value is ignored for integer arrays.
+                            Defaults to 256.
+        hist (Union[np.ndarray, Tuple[np.ndarray,np.ndarray]], optional):
+                            Histogram from which to determine the threshold, and optionally a
+                            corresponding array of bin center intensities. If no hist provided,
+                            this function will compute it from the image. Default to None.
+
+    Returns:
+        int: The calculated threshold
+        #Tuple[np.ndarray, float]: Tissue mask and upper threshold value. All pixels with an
+        intensity higher than this value are assumed to be tissue. 
+        (This output of img is false and true, need to be converted to 0 and 255,
+        0 for non-tissue, 255 for tissue mask.)
+    """
+    red_channel = image[:, :, 0].astype(float)
+    green_channel = image[:, :, 1].astype(float)
+    blue_channel = image[:, :, 2].astype(float)
+
+    red_to_green_mask = np.maximum(red_channel - green_channel, 0)
+    blue_to_green_mask = np.maximum(blue_channel - green_channel, 0)
+
+    tissue_heatmap = red_to_green_mask * blue_to_green_mask
+
+    threshold = threshold_otsu(
+        red_to_green_mask * blue_to_green_mask, nbins=nbins, hist=hist
+    )
+    """
+    mask = tissue_heatmap > threshold
+
+    if blur_kernel_width != 0:
+        blur_kernel = np.ones((blur_kernel_width, blur_kernel_width))
+        mask = convolve2d(mask, blur_kernel, mode = "same")
+        mask = mask > 0
+
+    img = np.where(mask, 255, 0).astype(np.uint8)
+    return mask, threshold
+    """
+    return threshold
+
+def _blood_mask(
+        image: np.ndarray,
+) -> np.ndarray:
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+
+    lower_red = np.array([0, 110, 70])
+    upper_red = np.array([20, 255, 255])
+    mask_1 = cv2.inRange(image, lower_red, upper_red)
+
+    lower_red = np.array([170, 120, 70])
+    upper_red = np.array([200, 255, 255])
+    mask_2 = cv2.inRange(image, lower_red, upper_red)
+    
+    blood_mask = mask_1 + mask_2
+    blood_mask = np.array(blood_mask)
+    #blood_mask = np.where(blood_mask == 255, 0, np.where(blood_mask == 0, 255, blood_mask))
+    return blood_mask
 
 
 def _gaussian_blur(
